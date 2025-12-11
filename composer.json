@@ -1,0 +1,35 @@
+{
+    "name": "jorr-it/laravel-datawarehouse",
+    "description": "Build your datawarehouse with Laravel Eloquent",
+    "keywords": [
+        "Laravel",
+        "datawarehouse",
+        "Eloquent",
+        "BI",
+        "business intelligence",
+        "OLAP",
+        "ETL",
+        "Flow PHP"
+    ],
+    "license": "MIT",    
+    "type": "library",
+    "version": "0.1.0-dev",
+    "authors": [
+        {
+            "name": "Jorrit Steetskamp",
+            "email": "jorrit@jorr.it"
+        }
+    ],
+    "require": {
+        "illuminate/database": "^12.0",
+        "illuminate/contracts": "^12.0",
+        "flow-php/etl": "^0.28.0",
+        "flow-php/etl-adapter-doctrine": "^0.28.0",
+        "flow-php/doctrine-dbal-bulk": "^0.28.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "JorrIt\\LaravelDatawarehouse\\": "src/"
+        }
+    }
+}
