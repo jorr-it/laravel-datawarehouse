@@ -75,7 +75,7 @@ class DatawarehouseBlueprint extends Blueprint
         // Create attributes to define validity
         if ($scdType->hasHistory()) 
         {
-            $fields->add($this->timestamp('start_at'));
+            $fields->add($this->timestamp('start_at')->useCurrent());
             $fields->add($this->timestamp('end_at')->nullable());
             $fields->add($this->boolean('current')->default(true));
             $this->index([$naturalKey, 'current'], 'naturalkey_idx');

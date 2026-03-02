@@ -19,6 +19,13 @@ class FactModel extends DatawarehouseModel
      */
     protected array $facts = [];
 
+    // override
+    public function getTable() : string
+    {
+        $factTableName = 'fact_' . Str::snake(class_basename($this));
+        return $this->table ?? $factTableName;
+    }    
+
     /**
      * @param class-string<DimensionModel> $dimensionClass
      * @return BelongsTo<DimensionModel>

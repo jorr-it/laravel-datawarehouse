@@ -15,7 +15,7 @@ abstract class DateDimensionModel extends DimensionModel
     protected ScdType $scdType = ScdType::RETAIN;
 
     protected $casts = [
-        'date' => 'datetime',
+        'id' => 'datetime',
     ];
 
     /**
@@ -26,7 +26,8 @@ abstract class DateDimensionModel extends DimensionModel
     {
         $tillDate ??= Carbon::now();
         $fromDate ??= Carbon::now();
-        $fromDate = max(static::max('id')?->addDay(), $fromDate);
+        $lastDateStr = static::max('id');
+        $fromDate = $lastDateStr ? max(Carbon::parse($lastDateStr)->addDay(), $fromDate) : $fromDate;
         $values = [];
         $current = $fromDate->copy();
 

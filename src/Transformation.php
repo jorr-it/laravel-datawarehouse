@@ -34,7 +34,7 @@ abstract class Transformation
     {
         $records = array_map(fn($record) => is_array($record) ? $record : ['id' => $record], $records);
 
-        $this->conn->table($table)->insert($records);
+        $this->conn->table($table)->upsert($records, "id");
     }
 
     protected function truncate(string $table, bool $ignoreForeignKeyConstraintsOnEmptyTable = true): void

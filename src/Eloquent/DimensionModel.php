@@ -2,6 +2,8 @@
 
 namespace JorrIt\LaravelDatawarehouse\Eloquent;
 
+use Illuminate\Database\Eloquent\Attributes\Scope;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Str;
 use JorrIt\LaravelDatawarehouse\Enum\ScdType;
 
@@ -28,6 +30,8 @@ abstract class DimensionModel extends DatawarehouseModel
         return $this->getTable() . $this->scdType == ScdType::HISTORY_TABLE ? "_history" : "";
     }
 
+    #region Relationships
+
     /**
      * @param class-string<FactModel> $factClass
      */
@@ -52,6 +56,25 @@ abstract class DimensionModel extends DatawarehouseModel
     {
         return parent::belongsTo($dimensionClass);
     }
+
+    #endregion
+
+    #region Scopes
+
+    #[Scope]
+    protected function findByNatural(Builder $query, $naturalId): void
+    {
+        $query->where($this->naturalKey, $naturalId);
+    }
+
+    #[Scope]
+    protected function current(Builder $query): void
+    {
+        if ($this->scdType->hasHistory())
+            $query->where('current', true);
+    }
+
+    #endregion
 
     // override
     public function save(array $options = []) : bool
