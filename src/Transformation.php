@@ -37,21 +37,15 @@ abstract class Transformation
         $this->conn->table($table)->upsert($records, "id");
     }
 
-    protected function truncate(string $table, bool $ignoreForeignKeyConstraintsOnEmptyTable = true): void
+    protected function truncate(string $table, bool $disableForeignKeyConstraints = true): void
     {
-        // If table is empty, don't check foreign key constraints
-        $contraintsTouched = false;
-        if ($ignoreForeignKeyConstraintsOnEmptyTable) {
-            $count = $this->conn->table($table)->count();
-            if ($count == 0) {
-                $this->schema->disableForeignKeyConstraints();
-                $contraintsTouched = true;
-            }
+        if ($disableForeignKeyConstraints) {
+            $this->schema->disableForeignKeyConstraints();
         }
 
         $this->conn->table($table)->truncate();
 
-        if ($contraintsTouched) {
+        if ($disableForeignKeyConstraints) {
             $this->schema->enableForeignKeyConstraints();
         }
     }    

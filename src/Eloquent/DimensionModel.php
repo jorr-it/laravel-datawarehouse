@@ -27,8 +27,18 @@ abstract class DimensionModel extends DatawarehouseModel
 
     public function getHistoryTable() : string
     {
-        return $this->getTable() . $this->scdType == ScdType::HISTORY_TABLE ? "_history" : "";
+        return $this->getTable() . ($this->scdType == ScdType::HISTORY_TABLE ? "_history" : "");
     }
+
+    public function getNaturalKeyName()
+    {
+        return $this->naturalKey;
+    }
+
+    public function getScdType()
+    {
+        return $this->scdType;
+    }    
 
     #region Relationships
 

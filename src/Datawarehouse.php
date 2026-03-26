@@ -46,6 +46,7 @@ class Datawarehouse
 
         // Make this the default connection
         $capsule->getDatabaseManager()->setDefaultConnection($connectionName);
+        $capsule->getDatabaseManager()->disableQueryLog();
 
         return $capsule;
     }

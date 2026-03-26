@@ -12,9 +12,12 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Str;
 use JorrIt\LaravelDatawarehouse\Eloquent\DatawarehouseModel;
 use JorrIt\LaravelDatawarehouse\Eloquent\DimensionModel;
-use function Flow\ETL\Adapter\Doctrine\{dbal_from_query, mysql_insert_options, to_dbal_table_insert, to_dbal_table_update, to_dbal_table_delete};
+use JorrIt\LaravelDatawarehouse\Enum\DuplicateHandling;
+use JorrIt\LaravelDatawarehouse\Enum\ScdType;
+use function Flow\ETL\Adapter\Doctrine\{mysql_insert_options, to_dbal_table_insert};
 use function Flow\ETL\DSL\data_frame;
 use function Flow\ETL\DSL\integer_entry;
+use function Flow\ETL\DSL\string_entry;
 
 /**
  * @see: https://flow-php.com/
@@ -32,22 +35,7 @@ class DatawarehouseFlow
         $this->bulk = Bulk::create();
     }
 
-    /**
-     * TODO: This method also updates with scdType RETAIN
-     * @param class-string<DatawarehouseModel> $model
-     */
-    public function upsert(string $model) : DbalLoader
-    {
-        $dummy = $model::newModelInstance();
-        $table = $dummy->getTable();
-        return to_dbal_table_insert($this->conn, $table); /*, mysql_insert_options(
-            skip_conflicts: $dummy->scdType == ScdType::RETAIN,
-            upsert: $dummy->scdType == ScdType::OVERWRITE));
-
-            The options parameter above would be perfect, but doesnt work.
-            The result is that ScdType::RETAIN also updates.
-            */
-    }
+    #region FROM
 
     public function fromLaravelQuery(\Illuminate\Database\Query\Builder $query) : DbalQueryExtractor
     {
@@ -59,17 +47,42 @@ class DatawarehouseFlow
         return $this->fromSqlQuery($query->getEntityManager()->getConnection(), $query->getSQL(), $query->getParameters()->toArray());
     }  
     
-    public function fromSqlQuery(\Doctrine\DBAL\Connection|\Illuminate\Database\Connection $connection, string $query, array $parameters = []) : DbalQueryExtractor
+    public function fromSqlQuery(\Doctrine\DBAL\Connection|\Illuminate\Database\Connection $connection, string $query, array $parameters = [], ?int $batchSize = null, ?string $batchByField = "id") : DbalQueryExtractor
     {
         if ($connection instanceof \Illuminate\Database\Connection) {
             $connection = $this->getDoctrineConnection($connection);
         }
         
-        // return dbal_from_query($connection, $query, $parameters);
+        $params = array();
+
+        if ($batchSize > 0) 
+        {
+            $queryCount = preg_replace('/\bselect\b\s+.*?\s+\bfrom\b/is', "SELECT MIN({$batchByField}) as min_id, MAX({$batchByField}) as max_id FROM", $query, 1);
+            $stats = $connection->fetchAssociative($queryCount);
+            $minId = (int)$stats['min_id'];
+            $maxId = (int)$stats['max_id'];
+
+            $query .= stripos($query, 'WHERE') !== false 
+                ? " AND {$batchByField} BETWEEN :start AND :end ORDER BY {$batchByField}" 
+                : " WHERE {$batchByField} BETWEEN :start AND :end ORDER BY {$batchByField}";
+
+            $params = [];
+
+            for ($start = $minId; $start <= $maxId; $start += $batchSize) {
+                $params[] = [
+                    ...$parameters,
+                    'start' => $start, 
+                    'end'   => $start + $batchSize - 1
+                ];
+            }
+        }
+        else {
+            $params = count($parameters) ? [$parameters] : [];
+        }
         
         $extractor = new DbalQueryExtractor($connection, $query);
 
-        return count($parameters) ? $extractor->withParameters(new ParametersSet(...$parameters)) : $extractor;
+        return count($params) ? $extractor->withParameters(new ParametersSet(...$params)) : $extractor;
     } 
 
     public function fromTable(\Doctrine\DBAL\Connection|\Illuminate\Database\Connection $connection, string $table, array|string $fields = "*", ?int $batchSize = null, ?string $batchByField = "id") : DbalQueryExtractor
@@ -77,27 +90,13 @@ class DatawarehouseFlow
         $fields = is_array($fields) ? implode(", ", $fields) : $fields;
         
         $query = "SELECT $fields FROM $table";
-        $params = array();
 
-        if ($batchSize > 0) 
-        {
-            $query .= " WHERE {$batchByField} BETWEEN :start AND :end ORDER BY {$batchByField}";
-            
-            $stats = $connection->fetchAssociative("SELECT MIN({$batchByField}) as min_id, MAX({$batchByField}) as max_id FROM {$table}");
-            $minId = (int)$stats['min_id'];
-            $maxId = (int)$stats['max_id'];
-            $params = [];
-
-            for ($start = $minId; $start <= $maxId; $start += $batchSize) {
-                $params[] = [
-                    'start' => $start, 
-                    'end'   => $start + $batchSize - 1
-                ];
-            }
-        }
-        
-        return $this->fromSqlQuery($connection, $query, $params);
+        return $this->fromSqlQuery($connection, $query, [], $batchSize, $batchByField);
     }
+
+    #endregion
+
+    #region BULK
     
     public function bulkInsert(DatawarehouseModel $model, BulkData $bulkData, ?InsertOptions $options = null) : void
     {
@@ -114,6 +113,15 @@ class DatawarehouseFlow
         $this->bulk->delete($this->conn, $model->getTable(), $bulkData);
     }
 
+    #endregion
+
+    #region MAP
+
+    /**
+     * @param array<class-string<DimensionModel>, array> $dimensionCache dimensionName => [ source id => dimension key ]
+     */
+    private static array $dimensionCache = [];
+
     /**
      * Used to map a source field to a dimension
      * @param class-string<DimensionModel> $dimensionName
@@ -121,20 +129,46 @@ class DatawarehouseFlow
      * @param string|null $dimensionField mostly the name of the natural key, null for autodetecting
      * @return (callable(Row):Row)
      */
-    public static function mapDimension(string $dimensionName, string $sourceField, ?string $foreignKey = null, ?string $dimensionMatchField = null) : callable
+    public static function mapDimension(string $dimensionName, string $sourceField, ?string $foreignKey = null, ?string $dimensionMatchField = null, bool $withCaching = true) : callable
     {
-        return static function (Row $row) use ($dimensionName, $sourceField, $dimensionMatchField, $foreignKey) : Row
+        return static function (Row $row) use ($dimensionName, $sourceField, $dimensionMatchField, $foreignKey, $withCaching) : Row
         {
-            /** @var DimensionModel */
-            $dimension = ($dimensionMatchField
-                ? $dimensionName::query()->current()->where($dimensionMatchField, $row->valueOf($sourceField))->first()
-                : $dimensionName::query()->current()->findByNatural($row->valueOf($sourceField))->first())
-                ?? new $dimensionName(); // if query gives null, then create a dummy object for reflection
+            $reflection = new \ReflectionClass($dimensionName);
+            $dummy = $dimensionName::newModelInstance();
+            $keyName = $dummy->getKeyName();
+            $foreignKey ??= Str::snake($reflection->getShortName()) . '_' . $keyName;
+            $dimensionMatchField ??= $dummy->getNaturalKeyName();
 
-            $reflection = new \ReflectionClass($dimension);
-            $foreignKey ??= Str::snake($reflection->getShortName()) . '_' . $dimension->getKeyName();
+            if ($withCaching) {
+                // lazy load on first request
+                if (!array_key_exists($dimensionName, self::$dimensionCache)) {
+                    self::$dimensionCache[$dimensionName] = $dimensionName::query()->current()->pluck($keyName, $dimensionMatchField)->all();
+                }
+                $foreignKeyValue = self::$dimensionCache[$dimensionName][$row->valueOf($sourceField)] ?? null;
+            }
+            else {
+                $foreignKeyValue = $dimensionName::query()->current()->where($dimensionMatchField, $row->valueOf($sourceField))->pluck($keyName)->first();
+            }
 
-            return $row->remove($sourceField)->add(integer_entry($foreignKey, $dimension->getKey()));
+            return $row->remove($sourceField)->add(integer_entry($foreignKey, $foreignKeyValue));
+        };
+    }
+
+    /**
+     * @param array<string, class-string<DimensionModel>> $dimensions sourceField => dimensionName
+     */
+    public static function mapDimensions(array $dimensions, bool $withCaching = true) : callable
+    {
+        return static function (Row $row) use ($dimensions, $withCaching) : Row
+        {
+            return array_reduce(
+                array_keys($dimensions),
+                static function (Row $carry, string $sourceField) use ($dimensions, $withCaching) : Row {
+                    $map = self::mapDimension($dimensions[$sourceField], $sourceField, withCaching: $withCaching);
+                    return $map($carry);
+                },
+                $row
+            );
         };
     }
 
@@ -150,7 +184,7 @@ class DatawarehouseFlow
         {
             /** @var DimensionModel */
             $dimension = $dimensionName::query()->current()->findByNatural($row->valueOf($sourceField))->first();
-            if ($dimension?->scdType->hasHistory()) {
+            if ($dimension?->getScdType()->hasHistory()) {
                 $dimension->current = false;
                 $dimension->end_at = Carbon::now();
                 $dimension->saveQuietly();
@@ -171,7 +205,7 @@ class DatawarehouseFlow
         {
             /** @var DimensionModel */
             $dimension = $dimensionName::query()->current()->findByNatural($row->valueOf($sourceField))->first(); 
-            if ($dimension?->scdType->hasPrevious()) { 
+            if ($dimension?->getScdType()->hasPrevious()) { 
                 foreach ($dimension->attributes_previous as $attr) {
                     $attr_prev = $attr.'_previous';
                     $dimension->$attr_prev = $dimension->$attr;
@@ -181,6 +215,53 @@ class DatawarehouseFlow
             return $row;
         };
     } 
+
+    /**
+     * Maps a generated row hash to the desired field
+     * @param class-string<DatawarehouseModel> $modelName
+     * @return (callable(Row):Row)
+     */
+    public static function mapRowHash(string $modelName, string $fieldName = 'row_hash') : callable
+    {
+        return static function (Row $row) use ($modelName, $fieldName) : Row
+        {
+            /** @var DatawarehouseModel */
+            $dummy = $modelName::newModelInstance($row->toArray());
+            $rowHash = $dummy->generateRowHash();
+            return $row->add(string_entry($fieldName, $rowHash));
+        };
+    }    
+
+    #endregion
+
+    /**
+     * Only works with MySQL and with SCD types 0, 1 and 2
+     * 
+     * @param class-string<DatawarehouseModel> $model
+     * @param ?DuplicateHandling $duplicateHandling Null for autodetect. Duplicates are detected by unique indexes, which are automatically generated by Blueprint's asDimension method.
+     */
+    public function upsert(string $model, ?DuplicateHandling $duplicateHandling = null) : DbalLoader
+    {
+        $dummy = $model::newModelInstance();
+        $table = $dummy->getTable();
+
+        $scdType = $dummy instanceof DimensionModel ? $dummy->getScdType() : null;
+
+        if ($scdType >= 3) {  
+            throw new \Exception("SCD types 3, 4 and 6 are not yet implemented for use with Flow upsert, use Eloquent save() instead");
+        }
+
+        if ($duplicateHandling == null) {
+            $duplicateHandling = match ($scdType) {
+                ScdType::RETAIN => DuplicateHandling::IGNORE,
+                default => DuplicateHandling::UPDATE,
+            };
+        }
+
+        return to_dbal_table_insert($this->conn, $table, mysql_insert_options(
+            skip_conflicts: $duplicateHandling == DuplicateHandling::IGNORE, // INSERT IGNORE in SQL
+            upsert: $duplicateHandling == DuplicateHandling::UPDATE)); // ON DUPLICATE KEY UPDATE in SQL
+    }
 
     private function getDoctrineConnection(\Illuminate\Database\Connection $conn) : \Doctrine\DBAL\Connection
     {

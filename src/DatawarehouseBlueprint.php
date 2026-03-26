@@ -17,7 +17,28 @@ class DatawarehouseBlueprint extends Blueprint
     {
         return $this->bigIncrements($column);
     }
-    
+
+    public function rowHash()
+    {
+        return $this->char('row_hash', 32)->unique('ldwh_rowhash_unique');
+    }
+
+    /**
+     * Add start_at, end_at, current, row_hash and index to the table.
+     *
+     * @return Collection<int, \Illuminate\Database\Schema\ColumnDefinition>
+     */
+    public function versioning(string $naturalKey = 'id') : Collection
+    {
+        return new Collection([
+            $this->timestamp('start_at')->useCurrent(),
+            $this->timestamp('end_at')->nullable(),
+            $this->boolean('current')->default(true),
+            $this->index([$naturalKey, 'current'], 'ldwh_naturalkey_idx'),
+            $this->rowHash()
+        ]);
+    }    
+
     /**
      * Creates dimension table(s) for the chosen SCD type.
      * SCD type 4 creates two tables at once.
@@ -65,7 +86,7 @@ class DatawarehouseBlueprint extends Blueprint
                 foreach ($this->getColumns() as $column) {
                     $table->addColumn($column['type'], $column['name'], $column['parameters'] ?? []);
                 }
-                $table->unique($naturalKey, 'naturalkey_idx');
+                $table->unique($naturalKey, 'ldwh_naturalkey_unique');
             });
 
             // Let's treat the current blueprint as the history table
@@ -75,15 +96,9 @@ class DatawarehouseBlueprint extends Blueprint
         // Create attributes to define validity
         if ($scdType->hasHistory()) 
         {
-            $fields->add($this->timestamp('start_at')->useCurrent());
-            $fields->add($this->timestamp('end_at')->nullable());
-            $fields->add($this->boolean('current')->default(true));
-            $this->index([$naturalKey, 'current'], 'naturalkey_idx');
+            $fields = $fields->merge($this->versioning($naturalKey));
         }
-        else {
-            $this->unique($naturalKey, 'naturalkey_idx');
-        }
-                
+    
         return $fields;
     }
 
