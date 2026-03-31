@@ -24,17 +24,16 @@ class DatawarehouseBlueprint extends Blueprint
     }
 
     /**
-     * Add start_at, end_at, current, row_hash and index to the table.
+     * Add start_at, end_at, current, row_hash to the table.
      *
      * @return Collection<int, \Illuminate\Database\Schema\ColumnDefinition>
      */
-    public function versioning(string $naturalKey = 'id') : Collection
+    public function versioning() : Collection
     {
         return new Collection([
             $this->timestamp('start_at')->useCurrent(),
             $this->timestamp('end_at')->nullable(),
             $this->boolean('current')->default(true),
-            $this->index([$naturalKey, 'current'], 'ldwh_naturalkey_idx'),
             $this->rowHash()
         ]);
     }    
@@ -96,7 +95,7 @@ class DatawarehouseBlueprint extends Blueprint
         // Create attributes to define validity
         if ($scdType->hasHistory()) 
         {
-            $fields = $fields->merge($this->versioning($naturalKey));
+            $fields = $fields->merge($this->versioning());
         }
     
         return $fields;

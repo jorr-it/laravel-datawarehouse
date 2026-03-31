@@ -58,7 +58,7 @@ class DatawarehouseFlow
         if ($batchSize > 0) 
         {
             $queryCount = preg_replace('/\bselect\b\s+.*?\s+\bfrom\b/is', "SELECT MIN({$batchByField}) as min_id, MAX({$batchByField}) as max_id FROM", $query, 1);
-            $stats = $connection->fetchAssociative($queryCount);
+            $stats = $connection->fetchAssociative($queryCount, $parameters);
             $minId = (int)$stats['min_id'];
             $maxId = (int)$stats['max_id'];
 
@@ -131,27 +131,32 @@ class DatawarehouseFlow
      */
     public static function mapDimension(string $dimensionName, string $sourceField, ?string $foreignKey = null, ?string $dimensionMatchField = null, bool $withCaching = true) : callable
     {
-        return static function (Row $row) use ($dimensionName, $sourceField, $dimensionMatchField, $foreignKey, $withCaching) : Row
-        {
-            $reflection = new \ReflectionClass($dimensionName);
-            $dummy = $dimensionName::newModelInstance();
-            $keyName = $dummy->getKeyName();
-            $foreignKey ??= Str::snake($reflection->getShortName()) . '_' . $keyName;
-            $dimensionMatchField ??= $dummy->getNaturalKeyName();
+        // Computed once per pipeline setup, not per row
+        $dummy = $dimensionName::newModelInstance();
+        $keyName = $dummy->getKeyName();
+        $foreignKey ??= Str::snake((new \ReflectionClass($dimensionName))->getShortName()) . '_' . $keyName;
+        $dimensionMatchField ??= $dummy->getNaturalKeyName();
 
-            if ($withCaching) {
-                // lazy load on first request
-                if (!array_key_exists($dimensionName, self::$dimensionCache)) {
-                    self::$dimensionCache[$dimensionName] = $dimensionName::query()->current()->pluck($keyName, $dimensionMatchField)->all();
-                }
-                $foreignKeyValue = self::$dimensionCache[$dimensionName][$row->valueOf($sourceField)] ?? null;
+        if ($withCaching) {
+            // Eager load once when the mapper is built
+            if (!array_key_exists($dimensionName, self::$dimensionCache)) {
+                self::$dimensionCache[$dimensionName] = $dimensionName::query()->current()->pluck($keyName, $dimensionMatchField)->all();
             }
-            else {
+            $cache = self::$dimensionCache[$dimensionName];
+
+            return static function (Row $row) use ($sourceField, $foreignKey, $cache) : Row
+            {
+                $foreignKeyValue = $cache[$row->valueOf($sourceField)] ?? null;
+                return $row->remove($sourceField)->add(integer_entry($foreignKey, $foreignKeyValue));
+            };
+        }
+        else {
+            return static function (Row $row) use ($dimensionName, $sourceField, $dimensionMatchField, $foreignKey, $keyName) : Row
+            {
                 $foreignKeyValue = $dimensionName::query()->current()->where($dimensionMatchField, $row->valueOf($sourceField))->pluck($keyName)->first();
-            }
-
-            return $row->remove($sourceField)->add(integer_entry($foreignKey, $foreignKeyValue));
-        };
+                return $row->remove($sourceField)->add(integer_entry($foreignKey, $foreignKeyValue));
+            };
+        }
     }
 
     /**
@@ -159,35 +164,16 @@ class DatawarehouseFlow
      */
     public static function mapDimensions(array $dimensions, bool $withCaching = true) : callable
     {
-        return static function (Row $row) use ($dimensions, $withCaching) : Row
-        {
-            return array_reduce(
-                array_keys($dimensions),
-                static function (Row $carry, string $sourceField) use ($dimensions, $withCaching) : Row {
-                    $map = self::mapDimension($dimensions[$sourceField], $sourceField, withCaching: $withCaching);
-                    return $map($carry);
-                },
-                $row
-            );
-        };
-    }
+        // Build all mappers once per pipeline setup, not per row
+        $mappers = [];
+        foreach ($dimensions as $sourceField => $dimensionName) {
+            $mappers[] = self::mapDimension($dimensionName, $sourceField, withCaching: $withCaching);
+        }
 
-    /**
-     * Used to archive old dimension records using current field
-     * @param class-string<DimensionModel> $dimensionName
-     * @param string $sourceField which source field holds the natural key that will be used to find dimension
-     * @return (callable(Row):Row)
-     */
-    public static function mapHistory(string $dimensionName, string $sourceField) : callable
-    {
-        return static function (Row $row) use ($dimensionName, $sourceField) : Row
+        return static function (Row $row) use ($mappers) : Row
         {
-            /** @var DimensionModel */
-            $dimension = $dimensionName::query()->current()->findByNatural($row->valueOf($sourceField))->first();
-            if ($dimension?->getScdType()->hasHistory()) {
-                $dimension->current = false;
-                $dimension->end_at = Carbon::now();
-                $dimension->saveQuietly();
+            foreach ($mappers as $mapper) {
+                $row = $mapper($row);
             }
             return $row;
         };

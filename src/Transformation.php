@@ -48,5 +48,31 @@ abstract class Transformation
         if ($disableForeignKeyConstraints) {
             $this->schema->enableForeignKeyConstraints();
         }
-    }    
+    }
+    
+    /**
+     * Sets current to false and end_at to date for old records
+     * 
+     * TODO: Move as static function to DimensionModel
+     */
+    protected function closeHistory(string $table, array|string $joinFields = "id") : bool
+    {
+        if (is_string($joinFields)) $joinFields = explode(",", $joinFields);
+        $joinFields = array_map('trim', $joinFields);        
+        $joinFields = array_map(fn($keyField) => "a.{$keyField} <=> b.{$keyField}", $joinFields);
+        $joinOn = implode(" AND ", $joinFields);
+
+        return $this->conn->statement("UPDATE {$table} old
+            INNER JOIN (
+                SELECT 
+                    a.key, 
+                    MIN(b.start_at) AS next_start_at
+                FROM {$table} a
+                INNER JOIN {$table} b ON {$joinOn} AND
+                    a.start_at < b.start_at AND
+                    a.current=1 AND b.current=1
+                GROUP BY a.key
+            ) exact_next ON old.key = exact_next.key
+            SET old.current = 0, old.end_at = exact_next.next_start_at");  
+    }
 }

@@ -26,7 +26,8 @@
         "flow-php/etl": "^0.28.0",
         "flow-php/etl-adapter-doctrine": "^0.28.0",
         "flow-php/doctrine-dbal-bulk": "^0.28.0",
-        "flow-php/etl-adapter-csv": "^0.28.0"
+        "flow-php/etl-adapter-csv": "^0.28.0",
+        "phpseclib/phpseclib": "^3.0"
     },
     "autoload": {
         "psr-4": {

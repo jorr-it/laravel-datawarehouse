@@ -23,18 +23,19 @@ class DatawarehouseModel extends Model
      */
     public function generateRowHash() : string
     {
+        // 1. NaturalKeyName has its own unique index if needed
+        // 2. Versioning fields should not be excluded... OR?
         $notUniqueAttributes = $this->guarded;
 
+        // This can be excluded because start_at makes the row hash
+        $notUniqueAttributes[] = 'current';
+        
         if ($this instanceof DimensionModel) {
-            // 1. NaturalKeyName has its own unique index if needed
-            // 2. 'Current' field should not be excluded
-            $notUniqueAttributes = [...$notUniqueAttributes, $this->getNaturalKeyName(), 'start_at', 'end_at'];
+            $notUniqueAttributes[] = $this->getNaturalKeyName();
         }
 
         $values = collect($this->getAttributes())
             ->except($notUniqueAttributes)
-            ->sortKeys()
-            ->values()
             ->all();
 
         $rawString = json_encode($values, JSON_PRESERVE_ZERO_FRACTION) ?: '';
