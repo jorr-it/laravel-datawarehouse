@@ -17,6 +17,7 @@ class Datawarehouse
      * @param array $config {
      *     @type string $driver (optional, default 'mysql')
      *     @type string $host (optional, default 'localhost')
+     *     @type int $port (optional, default 3306)
      *     @type string $database
      *     @type string $username
      *     @type string $password
@@ -33,6 +34,7 @@ class Datawarehouse
         $capsule->addConnection(array_merge([
             'driver' => 'mysql',
             'host' => 'localhost',
+            'port' => '3306',
             'charset' => 'utf8',
             'collation' => 'utf8_unicode_ci',
             'prefix' => '',            
