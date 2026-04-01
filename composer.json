@@ -27,7 +27,7 @@
         "flow-php/etl-adapter-doctrine": "^0.28.0",
         "flow-php/doctrine-dbal-bulk": "^0.28.0",
         "flow-php/etl-adapter-csv": "^0.28.0",
-        "symfony/process": "^8.0"
+        "symfony/process": "*"
     },
     "autoload": {
         "psr-4": {
