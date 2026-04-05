@@ -33,8 +33,11 @@ class DatawarehouseBlueprint extends Blueprint
         return new Collection([
             $this->timestamp('start_at')->useCurrent(),
             $this->timestamp('end_at')->nullable(),
+            $this->index(['start_at', 'end_at']),
             $this->boolean('current')->default(true),
-            $this->rowHash()
+            $this->rowHash(),
+            $this->index(['start_at', 'end_at']),
+            $this->index(['current'])
         ]);
     }    
 
