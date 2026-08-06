@@ -42,4 +42,9 @@ class DatawarehouseModel extends Model
         $this->row_hash = md5($rawString);
         return $this->row_hash;
     }
+
+    public static function getTableName() : string
+    {
+        return (new static)->getTable();
+    }
 }
