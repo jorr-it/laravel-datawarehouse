@@ -54,25 +54,31 @@ abstract class Transformation
      * Sets current to false and end_at to date for old records
      * 
      * TODO: Move as static function to DimensionModel
+     * TODO: Currently only works for MariaDB
      */
-    protected function closeHistory(string $table, array|string $joinFields = "id") : bool
+    protected function closeHistory(string $table, array|string $partitionBy = "id") : bool
     {
-        if (is_string($joinFields)) $joinFields = explode(",", $joinFields);
-        $joinFields = array_map('trim', $joinFields);        
-        $joinFields = array_map(fn($keyField) => "a.{$keyField} <=> b.{$keyField}", $joinFields);
-        $joinOn = implode(" AND ", $joinFields);
+        $cols = is_array($partitionBy) ? $partitionBy : explode(',', $partitionBy);
+        $partitionSql = implode(', ', array_map(fn($f) => '`' . trim($f) . '`', $cols));
 
-        return $this->conn->statement("UPDATE {$table} old
+        return $this->conn->statement("
+            UPDATE {$table} old
             INNER JOIN (
                 SELECT 
-                    a.key, 
-                    MIN(b.start_at) AS next_start_at
-                FROM {$table} a
-                INNER JOIN {$table} b ON {$joinOn} AND
-                    a.start_at < b.start_at AND
-                    a.current=1 AND b.current=1
-                GROUP BY a.key
-            ) exact_next ON old.key = exact_next.key
-            SET old.current = 0, old.end_at = exact_next.next_start_at");  
+                    `key`,
+                    `current`,
+                    `start_at`,
+                    LEAD(start_at) OVER (
+                        PARTITION BY {$partitionSql} 
+                        ORDER BY `start_at` ASC
+                    ) AS next_start_at
+                FROM {$table}
+                WHERE `current` = 1
+            ) sub ON old.`key` = sub.`key`
+            SET 
+                old.`current` = 0, 
+                old.`end_at` = sub.next_start_at
+            WHERE sub.next_start_at IS NOT NULL
+        ");   
     }
 }
