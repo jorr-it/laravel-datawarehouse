@@ -36,7 +36,6 @@ class DatawarehouseBlueprint extends Blueprint
             $this->index(['start_at', 'end_at']),
             $this->boolean('current')->default(true),
             $this->rowHash(),
-            $this->index(['start_at', 'end_at']),
             $this->index(['current'])
         ]);
     }    
