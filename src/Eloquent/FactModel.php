@@ -5,20 +5,10 @@ namespace JorrIt\LaravelDatawarehouse\Eloquent;
 use Illuminate\Database\Eloquent\Attributes\Scope;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Str;
-use JorrIt\LaravelDatawarehouse\Enum\AggregateFunction;
 use Illuminate\Database\Eloquent\Builder;
 
 class FactModel extends DatawarehouseModel
 {
-    /**
-     * In the key of each array item describe the fact field name.
-     * In the value of each array item choose which aggregate function should be applied 
-     * or describe the raw sql select statement for the field.
-     * 
-     * @var array<string, AggregateFunction|string> 
-     */
-    protected array $facts = [];
-
     // override
     public function getTable() : string
     {
@@ -42,25 +32,7 @@ class FactModel extends DatawarehouseModel
     public function toAggregatedFact(string $aggregatedFactClass)
     {
         return parent::belongsTo($aggregatedFactClass);
-    } 
-
-    #[Scope]
-    protected function selectFacts(Builder $query) : void
-    {
-        foreach ($this->facts as $fieldname => $sql) 
-        {
-            if ($sql instanceof AggregateFunction) 
-                $sql = $sql->value;
-
-            if (stripos($sql, '(') !== false)
-                $sql = $sql . '(' . $fieldname . ')';           
-            
-            if (stripos($sql, ' as ') !== false)
-                $sql .= ' as ' . $fieldname;
-
-            $query->selectRaw($sql);
-        }
-    }    
+    }   
 
     protected static function booted(): void
     {
